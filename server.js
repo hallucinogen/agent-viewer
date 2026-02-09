@@ -1,5 +1,5 @@
 const express = require('express');
-const { execSync } = require('child_process');
+const { execSync, exec } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -52,20 +52,21 @@ function fallbackLabel(text) {
 
 function callClaude(systemPrompt, userText) {
   return new Promise((resolve, reject) => {
-    try {
-      // Use claude CLI directly - it has its own auth
-      const prompt = `${systemPrompt}\n\n${userText}`;
-      const escaped = prompt.replace(/'/g, "'\\''");
-      const result = execSync(
-        `echo '${escaped}' | claude --print --model haiku 2>/dev/null`,
-        { encoding: 'utf-8', timeout: 15000 }
-      ).trim();
-      console.log(`[LABEL-CLI] Response: "${result}"`);
-      resolve(result);
-    } catch (e) {
-      console.log(`[LABEL-CLI] Failed: ${e.message.substring(0, 100)}`);
-      reject(e);
-    }
+    const prompt = `${systemPrompt}\n\n${userText}`;
+    const escaped = prompt.replace(/'/g, "'\\''");
+    exec(
+      `echo '${escaped}' | claude --print --model haiku 2>/dev/null`,
+      { encoding: 'utf-8', timeout: 15000 },
+      (err, stdout) => {
+        if (err) {
+          console.log(`[LABEL-CLI] Failed: ${err.message.substring(0, 100)}`);
+          return reject(err);
+        }
+        const result = stdout.trim();
+        console.log(`[LABEL-CLI] Response: "${result}"`);
+        resolve(result);
+      }
+    );
   });
 }
 
