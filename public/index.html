@@ -279,6 +279,20 @@ header .status-bar .dot {
   display: block;
 }
 
+.card .upload-status {
+  display: none;
+  padding: 6px 10px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  border-top: 1px solid var(--border);
+  color: var(--green);
+  background: rgba(0, 255, 0, 0.03);
+}
+
+.card .upload-status.active {
+  display: block;
+}
+
 
 /* ─── CARD PROMPT INPUT ─────────────────────────────────────────────── */
 .card-prompt {
@@ -1110,7 +1124,7 @@ function renderCard(agent) {
       <div class="card-actions">
         <button class="btn-send" onclick="sendPrompt('${agent.name}')">SEND</button>
         <button onclick="document.getElementById('file-${agent.name}').click()">FILE</button>
-        <button onclick="copyAttach('${agent.name}')">ATTACH</button>
+        <button onclick="copyAttach('${agent.name}')" title="Copy tmux attach command to clipboard">TERMINAL</button>
         <button class="btn-stop" onclick="confirmStop('${agent.name}')">STOP</button>
         <button onclick="openOutputViewer('${agent.name}')">VIEW OUTPUT</button>
       </div>`;
@@ -1148,6 +1162,7 @@ function renderCard(agent) {
       </div>
       ${promptBlock}
       ${fileInput}
+      <div class="upload-status" id="upload-status-${agent.name}"></div>
       ${dropHint}
       ${actions}
     </div>`;
@@ -1211,6 +1226,8 @@ async function uploadFile(agentName, input) {
   const file = input.files[0];
   if (!file) return;
 
+  showUploadStatus(agentName, file.name, 'uploading');
+
   const formData = new FormData();
   formData.append('file', file);
 
@@ -1221,10 +1238,12 @@ async function uploadFile(agentName, input) {
     });
     const data = await res.json();
     if (data.error) {
-      alert('Upload error: ' + data.error);
+      showUploadStatus(agentName, file.name, 'error');
+    } else {
+      showUploadStatus(agentName, file.name, 'sent');
     }
   } catch (e) {
-    alert('Upload failed: ' + e.message);
+    showUploadStatus(agentName, file.name, 'error');
   }
   // Reset the input so the same file can be re-selected
   input.value = '';
@@ -1233,15 +1252,14 @@ async function uploadFile(agentName, input) {
 function copyAttach(agentName) {
   const cmd = `tmux attach -t ${agentName}`;
   navigator.clipboard.writeText(cmd).then(() => {
-    // Brief visual feedback on the button
     const btns = document.querySelectorAll(`[data-name="${agentName}"] .card-actions button`);
     for (const btn of btns) {
-      if (btn.textContent === 'ATTACH') {
-        btn.textContent = 'COPIED!';
+      if (btn.textContent === 'TERMINAL') {
+        btn.textContent = 'COPIED CMD!';
         btn.style.borderColor = 'var(--green)';
         btn.style.color = 'var(--green)';
         setTimeout(() => {
-          btn.textContent = 'ATTACH';
+          btn.textContent = 'TERMINAL';
           btn.style.borderColor = '';
           btn.style.color = '';
         }, 1500);
@@ -1249,6 +1267,29 @@ function copyAttach(agentName) {
       }
     }
   });
+}
+
+function showUploadStatus(agentName, filename, state) {
+  const el = document.getElementById('upload-status-' + agentName);
+  if (!el) return;
+
+  const short = filename.length > 30 ? filename.substring(0, 27) + '...' : filename;
+
+  if (state === 'uploading') {
+    el.textContent = `UPLOADING: ${short}`;
+    el.style.color = 'var(--amber)';
+    el.classList.add('active');
+  } else if (state === 'sent') {
+    el.textContent = `SENT: ${short}`;
+    el.style.color = 'var(--green)';
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 5000);
+  } else {
+    el.textContent = `FAILED: ${short}`;
+    el.style.color = 'var(--red)';
+    el.classList.add('active');
+    setTimeout(() => el.classList.remove('active'), 5000);
+  }
 }
 
 async function stopAgent(agentName) {
@@ -1618,15 +1659,21 @@ function onCardFileDrop(event, agentName) {
   const formData = new FormData();
   formData.append('file', file);
 
+  showUploadStatus(agentName, file.name, 'uploading');
+
   fetch(`/api/agents/${agentName}/upload`, {
     method: 'POST',
     body: formData,
   })
   .then(r => r.json())
   .then(data => {
-    if (data.error) console.error('Drop upload error:', data.error);
+    if (data.error) {
+      showUploadStatus(agentName, file.name, 'error');
+    } else {
+      showUploadStatus(agentName, file.name, 'sent');
+    }
   })
-  .catch(e => console.error('Drop upload failed:', e));
+  .catch(() => showUploadStatus(agentName, file.name, 'error'));
 }
 
 // ─── HELPERS ───────────────────────────────────────────────────────────
