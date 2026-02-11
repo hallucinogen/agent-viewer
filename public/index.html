@@ -1171,6 +1171,97 @@ header .status-bar .dot {
   transform: scale(0.95);
 }
 
+/* ─── FOLDER PICKER ────────────────────────────────────────────────── */
+.browse-btn {
+  padding: 8px 12px;
+  background: none;
+  border: 1px solid var(--border);
+  border-left: none;
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.browse-btn:hover {
+  background: var(--green);
+  color: var(--bg);
+}
+
+.folder-picker {
+  display: none;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  margin-top: 6px;
+  max-height: 250px;
+  overflow-y: auto;
+}
+
+.folder-picker.active {
+  display: block;
+}
+
+.folder-picker .fp-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--green);
+  word-break: break-all;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.folder-picker .fp-header .fp-select {
+  background: none;
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 10px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.folder-picker .fp-header .fp-select:hover {
+  background: var(--green);
+  color: var(--bg);
+}
+
+.folder-picker .fp-item {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #111;
+  color: var(--white);
+}
+
+.folder-picker .fp-item:hover {
+  background: #111;
+  color: var(--green);
+}
+
+.folder-picker .fp-item.fp-parent {
+  color: var(--dim);
+}
+
+.folder-picker .fp-empty {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: #333;
+  text-align: center;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
 /* ─── SCROLLBAR ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -1262,7 +1353,9 @@ header .status-bar .dot {
             <button type="button" class="combo-toggle" onclick="toggleProjectDropdown()" title="Recent projects">&#9660;</button>
             <div class="combo-dropdown" id="projectDropdown"></div>
           </div>
+          <button class="browse-btn" onclick="toggleFolderPicker()">BROWSE</button>
         </div>
+        <div class="folder-picker" id="folderPicker"></div>
       </div>
       <div class="form-field">
         <label>PROMPT</label>
@@ -1937,6 +2030,66 @@ function openSpawnModal() {
 function closeSpawnModal() {
   document.getElementById('spawnModal').classList.remove('active');
   closeProjectDropdown();
+  document.getElementById('folderPicker').classList.remove('active');
+}
+
+// ─── FOLDER PICKER ─────────────────────────────────────────────────────
+async function toggleFolderPicker() {
+  const picker = document.getElementById('folderPicker');
+  if (picker.classList.contains('active')) {
+    picker.classList.remove('active');
+    return;
+  }
+  const current = document.getElementById('spawnProject').value.trim() || '';
+  await loadFolderPicker(current || undefined);
+}
+
+async function loadFolderPicker(dir) {
+  const picker = document.getElementById('folderPicker');
+  try {
+    const url = dir ? `/api/browse?dir=${encodeURIComponent(dir)}` : '/api/browse';
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error) {
+      picker.innerHTML = `<div class="fp-empty">${escapeHtml(data.error)}</div>`;
+      picker.classList.add('active');
+      return;
+    }
+
+    let html = `<div class="fp-header">
+      <span>${escapeHtml(data.current)}</span>
+      <button class="fp-select" onclick="selectFolder('${escapeAttr(data.current)}')">SELECT</button>
+    </div>`;
+
+    if (data.current !== data.parent) {
+      html += `<div class="fp-item fp-parent" onclick="loadFolderPicker('${escapeAttr(data.parent)}')">..</div>`;
+    }
+
+    if (data.dirs.length === 0) {
+      html += '<div class="fp-empty">NO SUBDIRECTORIES</div>';
+    } else {
+      for (const d of data.dirs) {
+        const full = data.current === '/' ? '/' + d : data.current + '/' + d;
+        html += `<div class="fp-item" onclick="loadFolderPicker('${escapeAttr(full)}')">${escapeHtml(d)}</div>`;
+      }
+    }
+
+    picker.innerHTML = html;
+    picker.classList.add('active');
+  } catch (e) {
+    picker.innerHTML = '<div class="fp-empty">FAILED TO BROWSE</div>';
+    picker.classList.add('active');
+  }
+}
+
+function selectFolder(path) {
+  document.getElementById('spawnProject').value = path;
+  document.getElementById('folderPicker').classList.remove('active');
+  document.getElementById('spawnPrompt').focus();
+}
+
+function escapeAttr(str) {
+  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 // ─── RECENT PROJECTS COMBO BOX ─────────────────────────────────────────
