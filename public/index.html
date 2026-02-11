@@ -231,6 +231,22 @@ header .status-bar .dot {
 .card[data-state="idle"] .state-badge { color: var(--amber); border: 1px solid var(--amber); }
 .card[data-state="completed"] .state-badge { color: var(--dim); border: 1px solid var(--dim); }
 
+.card-titlebar .prompt-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  letter-spacing: 1px;
+  color: #000;
+  background: var(--amber);
+  border: 1px solid var(--amber);
+  cursor: pointer;
+  animation: prompt-pulse 2s ease-in-out infinite;
+}
+
+@keyframes prompt-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
 .card-body {
   padding: 10px 12px;
   font-size: 11px;
@@ -1113,6 +1129,48 @@ header .status-bar .dot {
   }
 }
 
+/* ─── KEY CONTROLS (for interactive prompts) ───────────────────────── */
+.key-controls {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.key-controls .kc-label {
+  font-size: 10px;
+  color: var(--amber);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-right: 4px;
+}
+
+.key-controls button {
+  background: none;
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  cursor: pointer;
+  letter-spacing: 1px;
+  transition: all 0.1s;
+  min-width: 32px;
+  text-align: center;
+}
+
+.key-controls button:hover {
+  background: var(--amber);
+  color: var(--bg);
+}
+
+.key-controls button:active {
+  transform: scale(0.95);
+}
+
 /* ─── SCROLLBAR ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -1228,6 +1286,7 @@ header .status-bar .dot {
     <button class="close-btn" onclick="closeOutputViewer()">[X] CLOSE</button>
   </div>
   <div class="output-content" id="outputContent"></div>
+  <div class="key-controls" id="outputKeyControls" style="display:none"></div>
   <div class="output-prompt">
     <span class="prefix">&gt;_</span>
     <input type="text" id="outputPromptInput" placeholder="Send a message..."
@@ -1382,6 +1441,53 @@ function renderCard(agent) {
     ? `<div class="activity">${lastActHtml}</div>`
     : '';
 
+  // Interactive key controls for selection/permission prompts
+  // Use server-side detection, with client-side fallback from activity text
+  const promptType = agent.promptType || detectPromptTypeFromText(agent.lastActivity || '');
+  let keyControlsBlock = '';
+  if (promptType) {
+    let buttons = '';
+    const n = agent.name;
+    if (promptType === 'select') {
+      buttons = `
+        <span class="kc-label">SELECT:</span>
+        <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
+        <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
+        <button onclick="sendKey('${n}', 'Enter')" title="Confirm selection">ENTER</button>
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+    } else if (promptType === 'multiselect') {
+      buttons = `
+        <span class="kc-label">MULTI-SELECT:</span>
+        <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
+        <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
+        <button onclick="sendKey('${n}', 'Space')" title="Toggle selection">SPACE</button>
+        <button onclick="sendKey('${n}', 'Enter')" title="Confirm selections">ENTER</button>
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+    } else if (promptType === 'permission') {
+      buttons = `
+        <span class="kc-label">PERMISSION:</span>
+        <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
+        <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
+        <button onclick="sendKey('${n}', 'Enter')" title="Confirm">ENTER</button>
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+    } else if (promptType === 'plan') {
+      buttons = `
+        <span class="kc-label">PLAN:</span>
+        <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
+        <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
+        <button onclick="sendKey('${n}', 'Enter')" title="Confirm selection">ENTER</button>
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+    } else if (promptType === 'yesno') {
+      buttons = `
+        <span class="kc-label">CONFIRM:</span>
+        <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
+        <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
+        <button onclick="sendKey('${n}', 'Enter')" title="Confirm">ENTER</button>
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+    }
+    keyControlsBlock = `<div class="key-controls">${buttons}</div>`;
+  }
+
   // Prompt input for all agents
   const placeholders = {
     running: 'Queue a message...',
@@ -1441,12 +1547,16 @@ function renderCard(agent) {
          ${dropHandlers}>
       <div class="card-titlebar">
         <span>${escapeHtml(agent.label)}</span>
-        <span class="state-badge">${agent.state.toUpperCase()}</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          ${promptType ? `<span class="prompt-badge" onclick="openOutputViewer('${agent.name}')" title="Click to view & respond">${promptTypeLabel(promptType)}</span>` : ''}
+          <span class="state-badge">${agent.state.toUpperCase()}</span>
+        </span>
       </div>
       <div class="card-body">
         ${metaLines}
         ${activityBlock}
       </div>
+      ${keyControlsBlock}
       ${promptBlock}
       ${fileInput}
       ${dropHint}
@@ -1498,6 +1608,18 @@ async function sendPrompt(agentName) {
     fetchAgents();
   } catch (e) {
     console.error('Send error:', e);
+  }
+}
+
+async function sendKey(agentName, key) {
+  try {
+    await fetch(`/api/agents/${agentName}/keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ keys: key }),
+    });
+  } catch (e) {
+    console.error('Send key error:', e);
   }
 }
 
@@ -1639,9 +1761,99 @@ async function updateOutputViewer() {
     const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
     el.innerHTML = data.raw ? ansiToHtml(data.raw) : escapeHtml(data.output || '(no output)');
     if (wasAtBottom) el.scrollTop = el.scrollHeight;
+
+    // Show key controls if agent has an interactive prompt
+    updateOutputKeyControls();
   } catch (e) {
     console.error('Output fetch error:', e);
   }
+}
+
+function detectPromptTypeFromText(text) {
+  if (/space to select/i.test(text) && /enter to confirm/i.test(text)) return 'multiselect';
+  if (/allow\s+(once|always)/i.test(text) && /deny/i.test(text)) return 'permission';
+  // Plan detection before select (plan prompts also show "enter to select")
+  if (/ctrl.g to edit/i.test(text)) return 'plan';
+  if (/manually approve/i.test(text) && /\d\.\s/.test(text)) return 'plan';
+  if (/execute.*plan/i.test(text) && /\d\.\s/.test(text)) return 'plan';
+  if (/enter to select/i.test(text) && /to navigate/i.test(text)) return 'select';
+  if (/\(y\/n\)/i.test(text)) return 'yesno';
+  return null;
+}
+
+function updateOutputKeyControls() {
+  const kcEl = document.getElementById('outputKeyControls');
+  if (!currentOutputAgent || !kcEl) return;
+
+  // Try server-side detection first, then fallback to client-side from rendered output
+  const agent = agents.find(a => a.name === currentOutputAgent);
+  let pType = agent ? agent.promptType : null;
+
+  if (!pType) {
+    // Detect from the output content text directly
+    const outputEl = document.getElementById('outputContent');
+    if (outputEl) {
+      pType = detectPromptTypeFromText(outputEl.textContent || '');
+    }
+  }
+
+  if (!pType) {
+    kcEl.style.display = 'none';
+    return;
+  }
+
+  let buttons = '';
+  if (pType === 'select') {
+    buttons = `
+      <span class="kc-label">SELECT:</span>
+      <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
+      <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
+      <button onclick="sendKeyFromOutput('Enter')" title="Confirm selection">ENTER</button>
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+  } else if (pType === 'multiselect') {
+    buttons = `
+      <span class="kc-label">MULTI-SELECT:</span>
+      <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
+      <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
+      <button onclick="sendKeyFromOutput('Space')" title="Toggle selection">SPACE</button>
+      <button onclick="sendKeyFromOutput('Enter')" title="Confirm selections">ENTER</button>
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+  } else if (pType === 'permission') {
+    buttons = `
+      <span class="kc-label">PERMISSION:</span>
+      <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
+      <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
+      <button onclick="sendKeyFromOutput('Enter')" title="Confirm">ENTER</button>
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+  } else if (pType === 'plan') {
+    buttons = `
+      <span class="kc-label">PLAN:</span>
+      <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
+      <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
+      <button onclick="sendKeyFromOutput('Enter')" title="Confirm selection">ENTER</button>
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+  } else if (pType === 'yesno') {
+    buttons = `
+      <span class="kc-label">CONFIRM:</span>
+      <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
+      <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
+      <button onclick="sendKeyFromOutput('Enter')" title="Confirm">ENTER</button>
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+  }
+
+  if (buttons) {
+    kcEl.innerHTML = buttons;
+    kcEl.style.display = 'flex';
+  } else {
+    kcEl.style.display = 'none';
+  }
+}
+
+async function sendKeyFromOutput(key) {
+  if (!currentOutputAgent) return;
+  await sendKey(currentOutputAgent, key);
+  // Refresh output immediately to show the effect
+  setTimeout(updateOutputViewer, 300);
 }
 
 function closeOutputViewer() {
@@ -1976,6 +2188,17 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function promptTypeLabel(type) {
+  const labels = {
+    select: 'SELECT',
+    multiselect: 'MULTI-SELECT',
+    permission: 'PERMISSION',
+    plan: 'PLAN APPROVAL',
+    yesno: 'YES/NO',
+  };
+  return labels[type] || type.toUpperCase();
 }
 
 // ─── MOBILE TAB SWITCHING ───────────────────────────────────────────

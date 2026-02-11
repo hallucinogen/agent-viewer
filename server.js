@@ -253,26 +253,31 @@ async function waitForClaudeReady(sessionName, timeoutMs = 30000) {
 
     const recentText = lines.slice(-8).map(l => l.trim()).join('\n');
 
-    // Detect interactive prompts that block Claude startup and dismiss them:
-    // 1. Bypass-permissions trust prompt: "No, exit" / "Yes, I accept"
-    // 2. Settings error prompt: "Exit and fix manually" / "Continue without these settings"
-    // Both need Down (to select option 2) then Enter to proceed.
-    if (/Enter to confirm/i.test(recentText)) {
-      const needsDown = (/No, exit/i.test(recentText) && /Yes, I accept/i.test(recentText))
-        || (/Exit and fix manually/i.test(recentText) && /Continue without/i.test(recentText));
+    // Detect interactive prompts that block Claude startup and dismiss them.
+    // IMPORTANT: Only auto-dismiss known STARTUP prompts, not user-facing
+    // selection/multi-select prompts that happen during task execution.
+    // Startup prompts have specific option text we can match on.
+    const isTrustPrompt = /No, exit/i.test(recentText) && /Yes, I accept/i.test(recentText);
+    const isSettingsError = /Exit and fix manually/i.test(recentText) && /Continue without/i.test(recentText);
+    const isInfoPrompt = /Enter to confirm/i.test(recentText)
+      && !isTrustPrompt && !isSettingsError
+      // Don't auto-dismiss user selection prompts
+      && !/space to select/i.test(recentText)
+      && !/to navigate/i.test(recentText);
 
-      if (needsDown) {
-        console.log(`[SPAWN] Selection prompt detected for ${sessionName}, selecting option 2...`);
-        try {
-          execSync(`tmux send-keys -t ${sessionName} Down`, { encoding: 'utf-8', timeout: 3000 });
-          await new Promise(r => setTimeout(r, 200));
-          execSync(`tmux send-keys -t ${sessionName} Enter`, { encoding: 'utf-8', timeout: 3000 });
-        } catch (e) {
-          console.log(`[SPAWN] Failed to dismiss prompt for ${sessionName}: ${e.message}`);
-        }
-        continue;
+    if (isTrustPrompt || isSettingsError) {
+      console.log(`[SPAWN] Startup prompt detected for ${sessionName}, selecting option 2...`);
+      try {
+        execSync(`tmux send-keys -t ${sessionName} Down`, { encoding: 'utf-8', timeout: 3000 });
+        await new Promise(r => setTimeout(r, 200));
+        execSync(`tmux send-keys -t ${sessionName} Enter`, { encoding: 'utf-8', timeout: 3000 });
+      } catch (e) {
+        console.log(`[SPAWN] Failed to dismiss prompt for ${sessionName}: ${e.message}`);
       }
+      continue;
+    }
 
+    if (isInfoPrompt) {
       // Info-only prompts (e.g. Chrome extension notice): just press Enter
       console.log(`[SPAWN] Info prompt detected for ${sessionName}, pressing Enter...`);
       try {
@@ -447,6 +452,22 @@ function detectAgentState(sessionName, sessionsCache) {
 
   const recentText = lines.slice(-8).map(l => l.trim()).join('\n');
 
+  // Check for interactive TUI prompts FIRST (before "esc to interrupt"),
+  // because Claude's status bar may show "esc to interrupt" while an
+  // interactive selection/permission prompt is also visible.
+  const interactivePromptPatterns = [
+    /enter to select/i,                    // Single-select TUI prompt
+    /space to select/i,                    // Multi-select TUI prompt
+    /to navigate.*esc to cancel/i,         // General TUI selection hint
+    /Allow\s+(once|always)/i,              // Permission prompt options
+    /yes.*no.*always allow/i,             // Permission choice UI
+    /ctrl.g to edit/i,                     // Plan approval prompt
+  ];
+
+  if (interactivePromptPatterns.some(p => p.test(recentText))) {
+    return 'idle';
+  }
+
   // Claude Code's status bar shows "esc to interrupt" only when actively running
   if (/esc to interrupt/i.test(recentText)) {
     return 'running';
@@ -489,12 +510,10 @@ function detectAgentState(sessionName, sessionsCache) {
   const recentContent = contentLines.slice(-8).map(l => l.trim()).join('\n');
 
   const waitingForInputPatterns = [
-    /Allow\s+(once|always)/i,              // Permission prompt options
     /do you want to proceed/i,             // Plan/action approval
     /shall I proceed/i,                    // Asking to proceed
     /should I proceed/i,                   // Asking to proceed
     /approve|deny|reject/i,               // Approval prompt
-    /yes.*no.*always allow/i,             // Permission choice UI
     /\(y\/n\)/i,                           // y/n prompt
     /enter a value|enter to confirm/i,     // Input prompt
     /select.*option/i,                     // Selection prompt
@@ -507,6 +526,55 @@ function detectAgentState(sessionName, sessionsCache) {
   }
 
   return 'running';
+}
+
+/**
+ * Detect the type of interactive prompt Claude is showing (if any).
+ * Returns: 'select' | 'multiselect' | 'permission' | 'yesno' | 'plan' | null
+ */
+function detectPromptType(sessionName) {
+  const rawOutput = capturePaneOutput(sessionName, 50);
+  const output = stripAnsi(rawOutput);
+  const lines = output.split('\n').filter(l => l.trim() !== '');
+  if (lines.length === 0) return null;
+
+  const recentText = lines.slice(-20).map(l => l.trim()).join('\n');
+
+  // Multi-select: "Space to select · Enter to confirm"
+  if (/space to select/i.test(recentText) && /enter to confirm/i.test(recentText)) {
+    return 'multiselect';
+  }
+
+  // Permission prompt: "Allow once" / "Allow always" / "Deny"
+  if (/allow\s+(once|always)/i.test(recentText) && /deny/i.test(recentText)) {
+    return 'permission';
+  }
+
+  // Plan approval: check BEFORE generic select since plan prompts also show "enter to select"
+  if (/ctrl.g to edit/i.test(recentText) ||
+      (/manually approve/i.test(recentText) && /\d\.\s/.test(recentText)) ||
+      (/execute.*plan/i.test(recentText) && /\d\.\s/.test(recentText))) {
+    return 'plan';
+  }
+
+  // Single select: "Enter to select · ↑/↓ to navigate"
+  if (/enter to select/i.test(recentText) && /to navigate/i.test(recentText)) {
+    return 'select';
+  }
+
+  // Yes/No prompt
+  if (/\(y\/n\)/i.test(recentText) || (/yes.*no/i.test(recentText) && /do you want|shall i|should i/i.test(recentText))) {
+    return 'yesno';
+  }
+
+  // Generic numbered options fallback (AskUserQuestion, menus, etc.)
+  // Match if there are multiple numbered lines like "1. ...\n2. ..." in recent output
+  const numberedLines = recentText.split('\n').filter(l => /^\s*\d+[.)]\s/.test(l));
+  if (numberedLines.length >= 2) {
+    return 'select';
+  }
+
+  return null;
 }
 
 const NOISE_PATTERNS = [
@@ -559,12 +627,16 @@ function buildAgentInfo(sessionName, sessionsCache) {
     }
   }
 
+  // Detect interactive prompt type for non-completed agents
+  const promptType = state !== 'completed' ? detectPromptType(sessionName) : null;
+
   return {
     name: sessionName,
     label: reg.label || sessionName,
     projectPath: reg.projectPath || '',
     prompt: reg.prompt || '',
     state,
+    promptType,
     createdAt: reg.createdAt || 0,
     idleSince: reg.idleSince || null,
     completedAt: reg.completedAt || null,
@@ -834,6 +906,34 @@ app.delete('/api/cleanup/completed', (req, res) => {
     }
     saveRegistry();
     res.json({ status: 'cleaned', count });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Send raw tmux keys (for interactive prompts: Up, Down, Space, Enter, Escape)
+app.post('/api/agents/:name/keys', (req, res) => {
+  try {
+    const { name } = req.params;
+    const { keys } = req.body;
+    if (!keys) {
+      return res.status(400).json({ error: 'keys is required' });
+    }
+
+    // Whitelist allowed key names to prevent injection
+    const allowed = ['Up', 'Down', 'Space', 'Enter', 'Escape', 'Tab'];
+    if (!allowed.includes(keys)) {
+      return res.status(400).json({ error: `Invalid key. Allowed: ${allowed.join(', ')}` });
+    }
+
+    execSync(`tmux send-keys -t ${name} ${keys}`, { encoding: 'utf-8', timeout: 5000 });
+
+    if (registry[name]) {
+      registry[name].lastMessageSentAt = Date.now();
+      saveRegistry();
+    }
+
+    res.json({ status: 'sent', key: keys });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
