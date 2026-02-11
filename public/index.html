@@ -1522,7 +1522,7 @@ function renderCard(agent) {
       <div class="card-actions">
         <button class="btn-send" onclick="sendPrompt('${agent.name}')">SEND</button>
         <button onclick="document.getElementById('file-${agent.name}').click()">FILE</button>
-        <button onclick="copyAttach('${agent.name}')">ATTACH</button>
+        <button onclick="copyAttach('${agent.name}')">TERMINAL</button>
         <button class="btn-stop" onclick="confirmStop('${agent.name}')">STOP</button>
         <button onclick="openOutputViewer('${agent.name}')">VIEW OUTPUT</button>
       </div>`;
@@ -1677,12 +1677,12 @@ function copyAttach(agentName) {
     // Brief visual feedback on the button
     const btns = document.querySelectorAll(`[data-name="${agentName}"] .card-actions button`);
     for (const btn of btns) {
-      if (btn.textContent === 'ATTACH') {
+      if (btn.textContent === 'TERMINAL') {
         btn.textContent = 'COPIED!';
         btn.style.borderColor = 'var(--green)';
         btn.style.color = 'var(--green)';
         setTimeout(() => {
-          btn.textContent = 'ATTACH';
+          btn.textContent = 'TERMINAL';
           btn.style.borderColor = '';
           btn.style.color = '';
         }, 1500);
