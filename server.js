@@ -939,6 +939,65 @@ app.post('/api/agents/:name/keys', (req, res) => {
   }
 });
 
+// Send plan feedback: auto-navigate to "Type here" option, select it, type message, submit
+app.post('/api/agents/:name/plan-feedback', async (req, res) => {
+  try {
+    const { name } = req.params;
+    const { message } = req.body;
+    if (!message) {
+      return res.status(400).json({ error: 'message is required' });
+    }
+
+    // Read pane to find numbered options and locate "Type here" option
+    const rawOutput = capturePaneOutput(name, 50);
+    const output = stripAnsi(rawOutput);
+    const lines = output.split('\n').map(l => l.trim()).filter(l => l !== '');
+    const recentLines = lines.slice(-20);
+
+    const optionLines = recentLines.filter(l => /^\d+[.)]\s/.test(l));
+    const typeHereIdx = optionLines.findIndex(l => /type here/i.test(l));
+
+    if (typeHereIdx < 0) {
+      return res.status(400).json({ error: 'Could not find "Type here" option in plan prompt' });
+    }
+
+    // Navigate to top first (send enough Ups to be safe)
+    for (let i = 0; i < optionLines.length + 2; i++) {
+      execSync(`tmux send-keys -t ${name} Up`, { encoding: 'utf-8', timeout: 3000 });
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    // Navigate down to the "Type here" option
+    for (let i = 0; i < typeHereIdx; i++) {
+      execSync(`tmux send-keys -t ${name} Down`, { encoding: 'utf-8', timeout: 3000 });
+      await new Promise(r => setTimeout(r, 50));
+    }
+
+    // Select the option
+    execSync(`tmux send-keys -t ${name} Enter`, { encoding: 'utf-8', timeout: 3000 });
+
+    // Wait for the text input to appear
+    await new Promise(r => setTimeout(r, 500));
+
+    // Type the feedback
+    const escaped = message.replace(/'/g, "'\\''");
+    execSync(`tmux send-keys -t ${name} -l '${escaped}'`, { encoding: 'utf-8', timeout: 5000 });
+
+    // Submit
+    execSync(`tmux send-keys -t ${name} Enter`, { encoding: 'utf-8', timeout: 3000 });
+
+    if (registry[name]) {
+      registry[name].lastMessageSentAt = Date.now();
+      saveRegistry();
+    }
+
+    console.log(`[PLAN-FEEDBACK] Sent to ${name} (option ${typeHereIdx}): ${message.substring(0, 80)}`);
+    res.json({ status: 'sent', optionIndex: typeHereIdx });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/agents/:name/output', (req, res) => {
   try {
     const raw = capturePaneOutput(req.params.name, 200);

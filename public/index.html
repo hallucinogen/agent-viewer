@@ -1476,7 +1476,8 @@ function renderCard(agent) {
         <button onclick="sendKey('${n}', 'Up')" title="Move up">&#x2191;</button>
         <button onclick="sendKey('${n}', 'Down')" title="Move down">&#x2193;</button>
         <button onclick="sendKey('${n}', 'Enter')" title="Confirm selection">ENTER</button>
-        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>`;
+        <button onclick="sendKey('${n}', 'Escape')" title="Cancel">ESC</button>
+        <span style="color:var(--dim);font-size:10px;margin-left:4px">&middot; or type feedback below</span>`;
     } else if (promptType === 'yesno') {
       buttons = `
         <span class="kc-label">CONFIRM:</span>
@@ -1494,11 +1495,15 @@ function renderCard(agent) {
     idle: 'Type a follow-up task...',
     completed: 'Send a new task to re-spawn...',
   };
+  let placeholder = placeholders[agent.state] || 'Send a message...';
+  if (promptType === 'plan') {
+    placeholder = 'Type feedback for the plan...';
+  }
   const promptBlock = `
     <div class="card-prompt">
       <div class="prompt-row">
         <span class="prompt-prefix">&gt;_</span>
-        <textarea placeholder="${placeholders[agent.state] || 'Send a message...'}"
+        <textarea placeholder="${placeholder}"
                   onkeydown="handlePromptKey(event, '${agent.name}')"
                   id="prompt-${agent.name}"></textarea>
       </div>
@@ -1599,12 +1604,25 @@ async function sendPrompt(agentName) {
   if (!message) return;
 
   textarea.value = '';
+
+  // Check if this agent has a plan prompt - route to plan-feedback endpoint
+  const agent = agents.find(a => a.name === agentName);
+  const pType = agent ? (agent.promptType || detectPromptTypeFromText(agent.lastActivity || '')) : null;
+
   try {
-    await fetch(`/api/agents/${agentName}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    });
+    if (pType === 'plan') {
+      await fetch(`/api/agents/${agentName}/plan-feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+    } else {
+      await fetch(`/api/agents/${agentName}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+    }
     fetchAgents();
   } catch (e) {
     console.error('Send error:', e);
@@ -1831,7 +1849,8 @@ function updateOutputKeyControls() {
       <button onclick="sendKeyFromOutput('Up')" title="Move up">&#x2191;</button>
       <button onclick="sendKeyFromOutput('Down')" title="Move down">&#x2193;</button>
       <button onclick="sendKeyFromOutput('Enter')" title="Confirm selection">ENTER</button>
-      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>`;
+      <button onclick="sendKeyFromOutput('Escape')" title="Cancel">ESC</button>
+      <span style="color:var(--dim);font-size:10px;margin-left:4px">&middot; or type feedback below</span>`;
   } else if (pType === 'yesno') {
     buttons = `
       <span class="kc-label">CONFIRM:</span>
@@ -1846,6 +1865,12 @@ function updateOutputKeyControls() {
     kcEl.style.display = 'flex';
   } else {
     kcEl.style.display = 'none';
+  }
+
+  // Update output prompt placeholder based on prompt type
+  const outputInput = document.getElementById('outputPromptInput');
+  if (outputInput) {
+    outputInput.placeholder = pType === 'plan' ? 'Type feedback for the plan...' : 'Send a message...';
   }
 }
 
@@ -1871,12 +1896,29 @@ async function sendFromOutput() {
   const message = input.value.trim();
   if (!message) return;
   input.value = '';
+
+  // Check if plan prompt is active - route to plan-feedback endpoint
+  const agent = agents.find(a => a.name === currentOutputAgent);
+  let pType = agent ? agent.promptType : null;
+  if (!pType) {
+    const outputEl = document.getElementById('outputContent');
+    if (outputEl) pType = detectPromptTypeFromText(outputEl.textContent || '');
+  }
+
   try {
-    await fetch(`/api/agents/${currentOutputAgent}/send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    });
+    if (pType === 'plan') {
+      await fetch(`/api/agents/${currentOutputAgent}/plan-feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+    } else {
+      await fetch(`/api/agents/${currentOutputAgent}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      });
+    }
   } catch (e) {
     console.error('Send from output error:', e);
   }
