@@ -405,6 +405,22 @@ header .status-bar .dot {
   color: var(--amber);
 }
 
+.source-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--dim);
+  color: var(--dim);
+  letter-spacing: 1px;
+}
+.source-badge.scheduled { border-color: var(--amber); color: var(--amber); }
+.card-actions a.btn-link {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+.output-overlay.read-only .output-prompt,
+.output-overlay.read-only #outputKeyControls { display: none !important; }
+
 .card-actions .btn-resume:hover {
   background: var(--amber);
   color: var(--bg);
@@ -1568,6 +1584,7 @@ function renderColumn(columnId, columnAgents, emptyText) {
 }
 
 function renderCard(agent) {
+  if (agent.source === 'desktop' || agent.source === 'scheduled') return renderDesktopCard(agent);
   const uptime = agent.createdAt ? formatDuration(Date.now() - agent.createdAt) : '--';
   const idleFor = agent.idleSince ? formatDuration(Date.now() - agent.idleSince) : '';
   const projectName = agent.projectPath ? agent.projectPath.split('/').filter(Boolean).pop() : '--';
@@ -1674,6 +1691,58 @@ function renderCard(agent) {
       ${dropHint}
       ${actions}
     </div>`;
+}
+
+// Desktop app sessions are read-only: no prompt, no file drop, no tmux actions.
+function renderDesktopCard(agent) {
+  const projectName = agent.projectPath ? agent.projectPath.split('/').filter(Boolean).pop() : '--';
+  const sinceLabel = agent.state === 'running' ? 'ACTIVE' : 'LAST ACTIVE';
+  const since = agent.lastWrite ? formatDuration(Date.now() - agent.lastWrite) + ' AGO' : '--';
+  const sourceLabel = agent.source === 'scheduled' ? 'SCHEDULED' : 'APP';
+  let metaLines = `<div class="meta">PROJECT: <span>${escapeHtml(projectName)}</span></div>`;
+  if (agent.model) {
+    metaLines += `<div class="meta">MODEL: <span style="color:var(--amber)">${escapeHtml(agent.model.toUpperCase())}</span></div>`;
+  }
+  if (agent.scheduledTaskId) {
+    metaLines += `<div class="meta">TASK: <span>${escapeHtml(agent.scheduledTaskId)}</span> (latest run)</div>`;
+  }
+  if (agent.spawnedFromTitle) {
+    metaLines += `<div class="meta">STARTED BY: <span>${escapeHtml(agent.spawnedFromTitle)}</span></div>`;
+  }
+  metaLines += `<div class="meta">${sinceLabel}: <span>${since}</span></div>`;
+  const lastActHtml = ansiToHtml(agent.lastActivity || '');
+  const activityBlock = lastActHtml ? `<div class="activity">${lastActHtml}</div>` : '';
+  const hideBtn = agent.state !== 'running'
+    ? `<button class="btn-clear" onclick="hideDesktopAgent('${agent.name}', ${Number(agent.lastWrite) || 0})">HIDE</button>`
+    : '';
+  return `
+    <div class="card" data-state="${agent.state}" data-name="${agent.name}">
+      <div class="card-titlebar">
+        <span>${escapeHtml(agent.label)}</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <span class="source-badge ${agent.source}">${sourceLabel}</span>
+          <span class="state-badge">${agent.state.toUpperCase()}</span>
+        </span>
+      </div>
+      <div class="card-body">
+        ${metaLines}
+        ${activityBlock}
+      </div>
+      <div class="card-actions">
+        <a class="btn-link" href="${escapeHtml(agent.appLink)}"><button class="btn-send">OPEN IN APP</button></a>
+        <button onclick="openOutputViewer('${agent.name}')">VIEW TRANSCRIPT</button>
+        ${hideBtn}
+      </div>
+    </div>`;
+}
+
+async function hideDesktopAgent(agentName, lastWrite) {
+  try {
+    await fetch(`/api/agents/${agentName}/cleanup?lastWrite=${lastWrite}`, { method: 'DELETE' });
+    fetchAgents();
+  } catch (e) {
+    console.error('Hide error:', e);
+  }
 }
 
 // ─── ACTIONS ───────────────────────────────────────────────────────────
@@ -1930,6 +1999,8 @@ async function openOutputViewer(agentName) {
   document.getElementById('outputTitle').textContent =
     `OUTPUT: ${agent ? agent.label : agentName}`;
   document.getElementById('outputOverlay').classList.add('active');
+  const readOnly = !!(agent && (agent.source === 'desktop' || agent.source === 'scheduled'));
+  document.getElementById('outputOverlay').classList.toggle('read-only', readOnly);
   const promptInput = document.getElementById('outputPromptInput');
   promptInput.value = '';
   promptInput.style.height = 'auto';
