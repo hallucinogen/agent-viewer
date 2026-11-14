@@ -98,3 +98,14 @@ http://<machine-name>:4200
 - **File uploads** — Drag and drop files onto a card or click `FILE` to send files to an agent.
 - **Re-spawn** — Completed agents can be re-spawned with a new prompt from the same project directory.
 - **Attach** — Click `ATTACH` to copy the `tmux attach` command for direct terminal access.
+- **Claude desktop app sessions (macOS)** — Sessions from the Claude desktop app's Code tab show as read-only cards with an `APP` or `SCHEDULED` badge. Click `VIEW TRANSCRIPT` to read the conversation, or `OPEN IN APP` to jump to the session. Only the newest run of each scheduled task is shown.
+
+### Desktop app sessions
+
+Agent Viewer reads session metadata from `~/Library/Application Support/Claude/claude-code-sessions/` and transcripts from `~/.claude/projects/`. It never writes to these folders. You cannot send messages to or stop desktop sessions from the board.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DESKTOP_MAX_AGE_HOURS` | `48` | Hide desktop sessions with no activity for this long |
+| `DESKTOP_COMPLETED_AFTER_HOURS` | `12` | Move an idle desktop session to Completed after this long |
+| `DESKTOP_SESSIONS_DIR` | see above | Override the desktop session metadata folder |

@@ -1,2 +1,4 @@
 node_modules/
 .agent-registry.json
+.desktop-hidden.json
+agent-viewer.log

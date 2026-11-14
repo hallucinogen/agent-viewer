@@ -9,6 +9,20 @@ const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ─── Desktop app sessions (read-only) ────────────────────────────────────────
+const desktop = require('./desktop-sessions');
+
+// Desktop app sessions are read-only: only the output view and hiding a card work.
+app.use((req, res, next) => {
+  const m = req.path.match(/^\/api\/agents\/([^/]+)(\/[^/]+)?$/);
+  if (!m || !desktop.isDesktopName(m[1])) return next();
+  const action = m[2] || '';
+  if (req.method === 'GET' && action === '/output') return next();
+  if (req.method === 'DELETE' && action === '/cleanup') return next();
+  if (req.method === 'POST' && action === '/resize') return res.json({ ok: true });
+  return res.status(400).json({ error: 'Desktop app sessions are read-only here. Open them in the Claude app.' });
+});
+
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = process.env.PORT || 4200;
 const REGISTRY_FILE = path.join(__dirname, '.agent-registry.json');
@@ -791,6 +805,12 @@ function getAllAgents() {
   }
 
   saveRegistry();
+
+  try {
+    for (const a of desktop.listDesktopAgents()) agents.push(a);
+  } catch (e) {
+    console.log(`[DESKTOP] Failed to read desktop sessions: ${e.message}`);
+  }
   return agents;
 }
 
@@ -1003,6 +1023,10 @@ app.delete('/api/agents/:name', (req, res) => {
 app.delete('/api/agents/:name/cleanup', (req, res) => {
   try {
     const { name } = req.params;
+    if (desktop.isDesktopName(name)) {
+      desktop.hideDesktopAgent(name, Number(req.query.lastWrite) || Date.now());
+      return res.json({ status: 'hidden' });
+    }
     if (!registry[name]) {
       return res.status(404).json({ error: 'Agent not found' });
     }
@@ -1024,6 +1048,12 @@ app.delete('/api/cleanup/completed', (req, res) => {
     for (const name of Object.keys(registry)) {
       if (registry[name].state === 'completed') {
         delete registry[name];
+        count++;
+      }
+    }
+    for (const a of desktop.listDesktopAgents()) {
+      if (a.state === 'completed') {
+        desktop.hideDesktopAgent(a.name, a.lastWrite);
         count++;
       }
     }
@@ -1173,6 +1203,11 @@ app.post('/api/agents/:name/resize', (req, res) => {
 
 app.get('/api/agents/:name/output', (req, res) => {
   try {
+    if (desktop.isDesktopName(req.params.name)) {
+      const out = desktop.getDesktopOutput(req.params.name);
+      if (!out) return res.status(404).json({ error: 'Agent not found' });
+      return res.json(out);
+    }
     const raw = capturePaneOutput(req.params.name, 200);
     const clean = stripAnsi(raw);
     res.json({ output: clean, raw });
